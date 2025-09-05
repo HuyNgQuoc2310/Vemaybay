@@ -1,0 +1,51 @@
+name: VietJet Month Watch (HAN→SGN Feb-2026)
+
+on:
+  schedule:
+    - cron: "10 2 * * *"   # chạy MỖI NGÀY lúc 02:10 UTC (≈ 09:10 VN)
+  workflow_dispatch: {}     # cho phép bấm Run thủ công
+
+jobs:
+  month_watch:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write       # để commit thư mục state vào repo
+
+    env:
+      # --- Telegram ---
+      BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+      CHAT_ID:   ${{ secrets.CHAT_ID }}
+
+      # --- Tuyến & tháng cần theo dõi ---
+      ORIGIN: "HAN"
+      DEST:   "SGN"
+      YEAR:   "2026"
+      MONTH:  "2"           # tháng 2/2026
+      CURRENCY: "VND"
+
+      # Gửi báo cáo mỗi ngày dù không đổi (true/false)
+      ALWAYS_SEND: "false"
+
+      # Nếu cần: chỉ báo khi có ngày rẻ hơn X VND so với hôm qua (0 = tắt)
+      PRICE_DROP_NOTIFY: "0"
+
+    steps:
+      - name: Checkout (giữ credential để push state)
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cài Playwright + Chromium
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          python -m playwright install --with-deps chromium
+
+      - name: Chạy tháng 02/2026
+        run: |
+          python vietjet_month_watch.py
