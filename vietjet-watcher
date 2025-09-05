@@ -1,0 +1,7 @@
+your-repo/
+├─ .github/
+│  └─ workflows/
+│     └─ price-watch.yml     # Workflow (cron) chạy script
+├─ requirements.txt          # Thư viện Python
+├─ vietjet_watcher.py        # Script chính
+└─ README.md                 # (tuỳ chọn)
