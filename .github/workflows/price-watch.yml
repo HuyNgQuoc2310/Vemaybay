@@ -1,0 +1,47 @@
+name: VietJet Price Watch
+
+on:
+  schedule:
+    # Lịch chạy UTC! (VN = UTC+7). Ví dụ mỗi 2 giờ:
+    - cron: "0 */2 * * *"
+  workflow_dispatch: {}       # Cho phép bấm "Run workflow" chạy tay
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # để commit thư mục state vào repo
+    strategy:
+      fail-fast: false
+      matrix:
+        route:
+          # Thêm/đổi nhiều tuyến ở đây (ví dụ)
+          - { ORIGIN: "HAN", DEST: "SGN", DATE: "2025-09-20", CURRENCY: "VND", PRICE_DROP_NOTIFY: "50000" }
+          - { ORIGIN: "HAN", DEST: "DAD", DATE: "2025-09-22", CURRENCY: "VND", PRICE_DROP_NOTIFY: "50000" }
+
+    env:
+      BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+      CHAT_ID: ${{ secrets.CHAT_ID }}
+      ORIGIN: ${{ matrix.route.ORIGIN }}
+      DEST: ${{ matrix.route.DEST }}
+      DATE: ${{ matrix.route.DATE }}
+      CURRENCY: ${{ matrix.route.CURRENCY }}
+      PRICE_DROP_NOTIFY: ${{ matrix.route.PRICE_DROP_NOTIFY }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies (Playwright + Chromium)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          python -m playwright install --with-deps chromium
+
+      - name: Run watcher
+        run: python vietjet_watcher.py
