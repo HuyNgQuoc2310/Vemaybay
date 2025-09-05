@@ -1,9 +1,8 @@
 import os, json, re, asyncio, ssl, http.client, urllib.parse, subprocess
 from datetime import datetime
 from pathlib import Path
-from playwright.async_api import async_playwright
+from playwright.async_api import async_playwright, TimeoutError as PWTimeout
 
-# --- ENV (đặt qua matrix hoặc env workflow) ---
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 ORIGIN = os.getenv("ORIGIN", "HAN")
@@ -12,9 +11,7 @@ DATE = os.getenv("DATE")  # YYYY-MM-DD
 CURRENCY = os.getenv("CURRENCY", "VND")
 PRICE_DROP_NOTIFY = int(os.getenv("PRICE_DROP_NOTIFY", "0"))
 
-# Thư mục state trong repo (được commit lại để lưu giá lần trước)
-STATE_DIR = Path("state")
-STATE_DIR.mkdir(parents=True, exist_ok=True)
+STATE_DIR = Path("state"); STATE_DIR.mkdir(parents=True, exist_ok=True)
 STATE_FILE = STATE_DIR / f"vietjet_{ORIGIN}_{DEST}_{DATE}.json"
 
 SEARCH_URL = (
@@ -30,8 +27,7 @@ USER_AGENT = (
 
 def send_telegram(text: str):
     if not BOT_TOKEN or not CHAT_ID:
-        print("Missing BOT_TOKEN/CHAT_ID")
-        return
+        print("Missing BOT_TOKEN/CHAT_ID"); return
     host = "api.telegram.org"
     path = f"/bot{BOT_TOKEN}/sendMessage"
     payload = urllib.parse.urlencode({
@@ -46,17 +42,15 @@ def send_telegram(text: str):
     try:
         conn.request("POST", path, body=payload, headers=headers)
         resp = conn.getresponse()
-        if resp.status != 200:
-            print("Telegram error:", resp.status, resp.read()[:300])
+        body = resp.read().decode("utf-8", errors="ignore")
+        print("Telegram HTTP", resp.status, body[:400])
     finally:
         conn.close()
 
 def load_state():
     if STATE_FILE.exists():
-        try:
-            return json.loads(STATE_FILE.read_text("utf-8"))
-        except:
-            return {}
+        try: return json.loads(STATE_FILE.read_text("utf-8"))
+        except: return {}
     return {}
 
 def save_state(obj):
@@ -70,33 +64,33 @@ async def fetch_price(play):
     ctx = await browser.new_context(user_agent=USER_AGENT, locale="vi-VN")
     page = await ctx.new_page()
     try:
-        await page.goto(SEARCH_URL, wait_until="domcontentloaded", timeout=120000)
-        # Chờ vài selector khả dĩ; nếu không thì regex full HTML
+        await page.goto(SEARCH_URL, wait_until="load", timeout=120000)
+        try: await page.wait_for_load_state("networkidle", timeout=20000)
+        except PWTimeout: pass
+
         for sel in ["[data-testid='fare-card']", ".fare", "[class*='price']", "[data-test*='price']"]:
             try:
                 await page.wait_for_selector(sel, timeout=15000)
                 break
-            except:
-                pass
+            except PWTimeout:
+                continue
+
         html = await page.content()
         nums = re.findall(r"(\d{1,3}(?:[.,]\d{3})+|\d{5,10})", html)
         prices = []
         for s in nums:
             v = int(re.sub(r"[^\d]", "", s))
-            if v >= 100000:
-                prices.append(v)
+            if v >= 100000: prices.append(v)
         return min(prices) if prices else None
     finally:
-        await ctx.close()
-        await browser.close()
+        await ctx.close(); await browser.close()
 
 def to_vnd(x): return f"{x:,}".replace(",", ".") + f" {CURRENCY}"
 
 def git_commit_if_changed(message: str):
-    # Commit state thay đổi (nếu có)
     subprocess.run(["git", "config", "user.name", "github-actions"], check=True)
     subprocess.run(["git", "config", "user.email", "github-actions@users.noreply.github.com"], check=True)
-    subprocess.run(["git", "add", "state"], check=True)
+    subprocess.run(["git", "add", "state"], check=False)
     diff = subprocess.run(["git", "diff", "--cached", "--quiet"])
     if diff.returncode != 0:
         subprocess.run(["git", "commit", "-m", message], check=True)
@@ -105,6 +99,7 @@ def git_commit_if_changed(message: str):
         print("No state changes to commit.")
 
 async def main():
+    print(f"URL: {SEARCH_URL}")
     state = load_state()
     prev = state.get("price")
 
@@ -128,11 +123,12 @@ async def main():
         arrow = "⬇️" if diff < 0 else "⬆️"
         send_telegram(
             f"🛎️ Cập nhật {ORIGIN}→{DEST} ({DATE}) {arrow}\n"
-            f"Cũ: {to_vnd(prev)}\nMới: <b>{to_vnd(price)}</b>\nChênh: {to_vnd(abs(diff))}\n({ts})\n{SEARCH_URL}"
+            f"Cũ: {to_vnd(prev)}\nMới: <b>{to_vnd(price)}</b>\n"
+            f"Chênh: {to_vnd(abs(diff))}\n({ts})\n{SEARCH_URL}"
         )
+
     save_state({"price": price, "last_update": ts})
     git_commit_if_changed(f"state: update {ORIGIN}-{DEST}-{DATE}")
 
 if __name__ == "__main__":
     asyncio.run(main())
-
