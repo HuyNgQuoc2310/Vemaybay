@@ -1,23 +1,27 @@
 name: VietJet Price Watch
 
 on:
+  workflow_dispatch: {}
   schedule:
-    # Lịch chạy UTC! (VN = UTC+7). Ví dụ mỗi 2 giờ:
-    - cron: "0 */2 * * *"
-  workflow_dispatch: {}       # Cho phép bấm "Run workflow" chạy tay
+    - cron: "0 */2 * * *"      # mỗi 2 giờ (UTC)
+  push:
+    branches: [ main ]
+    paths:
+      - ".github/workflows/price-watch.yml"
+      - "requirements.txt"
+      - "vietjet_watcher.py"
 
 jobs:
   watch:
     runs-on: ubuntu-latest
     permissions:
-      contents: write   # để commit thư mục state vào repo
+      contents: write           # để commit thư mục state
     strategy:
       fail-fast: false
       matrix:
         route:
-          # Thêm/đổi nhiều tuyến ở đây (ví dụ)
           - { ORIGIN: "HAN", DEST: "SGN", DATE: "2025-09-20", CURRENCY: "VND", PRICE_DROP_NOTIFY: "50000" }
-          - { ORIGIN: "HAN", DEST: "DAD", DATE: "2025-09-22", CURRENCY: "VND", PRICE_DROP_NOTIFY: "50000" }
+          # thêm tuyến ở đây nếu cần
 
     env:
       BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
@@ -29,19 +33,39 @@ jobs:
       PRICE_DROP_NOTIFY: ${{ matrix.route.PRICE_DROP_NOTIFY }}
 
     steps:
-      - name: Checkout
+      - name: Checkout (with credentials)
         uses: actions/checkout@v4
+        with:
+          persist-credentials: true   # để git push state
+
+      - name: Show route
+        run: |
+          echo "Route: $ORIGIN -> $DEST on $DATE ($CURRENCY)"
+          test -n "$BOT_TOKEN" || (echo "::error::Missing BOT_TOKEN"; exit 1)
+          test -n "$CHAT_ID"   || (echo "::error::Missing CHAT_ID"; exit 1)
+
+      - name: Ping start (debug Telegram)
+        run: |
+          set -euxo pipefail
+          curl -sS -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
+            -d chat_id="${CHAT_ID}" \
+            -d text="Bắt đầu job 📦 $(date -u +'%Y-%m-%d %H:%M:%S UTC') – $ORIGIN→$DEST $DATE" \
+            -d disable_web_page_preview=true | tee /tmp/start.json
+          echo "::notice::Start ping: $(cat /tmp/start.json)"
 
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Install dependencies (Playwright + Chromium)
+      - name: Install deps (Playwright + Chromium)
         run: |
+          set -euxo pipefail
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           python -m playwright install --with-deps chromium
 
       - name: Run watcher
-        run: python vietjet_watcher.py
+        run: |
+          set -euxo pipefail
+          python vietjet_watcher.py
